@@ -3,17 +3,13 @@ use std::sync::{Arc, Mutex};
 use crate::network::NetworkState;
 use crate::server::Server;
 use crate::client::Client;
+use crate::output::*;
 
 pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&str>) {
 	match name {
 		"host" => {
-			if args.len() < 1 {
-				println!("Not enough arguments");
-				return;
-			}
-
 			if args.len() > 3 {
-				println!("Too much arguments were given");
+				output("Too much arguments were given");
 				return;
 			}
 			
@@ -28,34 +24,39 @@ pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&s
 				execute(Arc::clone(&network_state), "leave", vec![]);
 			}
 
-			let port = match args[0].parse::<u16>() {
-				Ok(x) => x,
-				Err(_) => {
-					println!("Invalid port");
-					return;
-				}
-			};
+			let mut port = 5000;
+			
+			match args.get(0) {
+				Some(x) => port = match x.parse::<u16>() {
+					Ok(x) => x,
+					Err(_) => {
+						output("Invalid port");
+						return;
+					}
+				},
+				_ => ()
+			}
 
-			println!("Opening Cluster");
+			output("Opening Cluster");
 
 			*network_state.lock().unwrap() = NetworkState::Server(match Server::open(port) {
 				Ok(x) => x,
 				Err(e) => {
-					println!("{}", e);
+					output(&e);
 					return;
 				}
 			});
 
-			println!("Cluster open");
+			output("Cluster open");
 		}
 		"join" => {
 			if args.len() < 1 {
-				println!("Not enough arguments");
+				output("Not enough arguments");
 				return;
 			}
 
 			if args.len() > 3 {
-				println!("Too much arguments were given");
+				output("Too much arguments were given");
 				return;
 			}
 
@@ -70,27 +71,27 @@ pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&s
 				execute(Arc::clone(&network_state), "leave", vec![]);
 			}
 
-			println!("Joining Cluster");
+			output("Joining Cluster");
 
 			*network_state.lock().unwrap() = NetworkState::Client(match Client::connect(args[0]) {
 				Ok(x) => x,
 				Err(e) => {
-					println!("{}", e);
+					output(&e);
 					return;
 				}
 			});
 
-			println!("Cluster joined");
+			output("Cluster joined");
 		}
 		"leave" => {
 			match *network_state.lock().unwrap() {
-				NetworkState::None => println!("You are not in a Cluster"),
-				_ => println!("Cluster left")
+				NetworkState::None => output("You are not in a Cluster"),
+				_ => output("Cluster left")
 			}
 
 			*network_state.lock().unwrap() = NetworkState::None;
 		}
 		"quit" => std::process::exit(0),
-		_ => println!("Unknown command '{}'", name)
+		_ => output(&format!("Unknown command '{}'", name))
 	}
 }

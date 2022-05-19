@@ -1,6 +1,7 @@
 mod client;
 mod command;
 mod network;
+mod output;
 mod server;
 
 use std::io::{self, Write};
@@ -8,11 +9,20 @@ use std::env;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use terminal::cursor;
+use terminal::utils::Position;
+
 use network::NetworkState;
 
 fn main() {
 	let network_state = Arc::new(Mutex::new(NetworkState::None));
 	let args: Vec<String> = env::args().collect();
+
+	print!(" > ");
+
+	io::stdout()
+		.flush()
+		.unwrap();
 
 	if args.len() > 1 {
 		let command_name = args[1].as_str();
@@ -30,25 +40,19 @@ fn main() {
 		let network_state = network_state_clone;
 
 		loop {
-			match &*network_state.lock().unwrap() {
+			match &mut *network_state.lock().unwrap() {
 				NetworkState::Server(server) => {
-
+					server.handle();
 				}
 				NetworkState::Client(client) => {
-					
+					client.handle();
 				}
 				_ => ()
 			}
 		}
 	});
-	
+
 	loop {
-		print!(" > ");
-
-		io::stdout()
-			.flush()
-			.unwrap();
-
 		let mut input = String::new();
 
 		io::stdin()
@@ -73,6 +77,22 @@ fn main() {
 				.collect();
 
 			command::execute(Arc::clone(&network_state), &command_name, command_args);
+		} else {
+			if input.is_empty() {
+				cursor::set_pos(Position::new(0, cursor::get_pos().y - 1));
+			} else {
+				match &mut *network_state.lock().unwrap() {
+					NetworkState::Server(server) => server.send(&input),
+					NetworkState::Client(client) => client.send(&input),
+					_ => ()
+				}
+			}
+
+			print!(" > ");
+
+			io::stdout()
+				.flush()
+				.unwrap();
 		}
 	}
 }
