@@ -9,23 +9,32 @@ pub struct Client {
 
 impl Client {
 	pub fn connect(address: &str) -> Result<Self, String> {
-		let stream = TcpStream::connect(address).expect("Invalid address");
-		stream.set_nonblocking(true).expect("Failed setting non blocking");
+		let stream = match TcpStream::connect(address) {
+			Ok(x) => x,
+			Err(_) => return Err("Invalid address".to_owned())
+		};
+
+		match stream.set_nonblocking(true) {
+			Ok(x) => x,
+			Err(_) => return Err("Failed setting non blocking".to_owned())
+		}
 
 		Ok(Self {
 			stream
 		})
 	}
 
-	pub fn handle(&mut self) {
+	pub fn handle(&mut self) -> bool {
+		const BUFFER_SIZE: usize = 256;
+
 		let mut msg: Vec<u8> = Vec::new();
-		let mut buffer = [0; 3];
+		let mut buffer = [0; BUFFER_SIZE];
 
 		match self.stream.read(&mut buffer) {
 			Ok(received) => {
 				if received < 1 {
 					output("Connection with host lost");
-					return;
+					return false;
 				}
 
 				for (i, c) in buffer.iter().enumerate() {
@@ -45,16 +54,18 @@ impl Client {
 			Err(e) => {
 				if e.kind() != io::ErrorKind::WouldBlock {
 					output("Connection with host lost");
-					return;
+					return false;
 				}
 			}
 		}
+
+		true
 	}
 
 	pub fn send(&mut self, message: &str) {
 		match write!(self.stream, "{}\n", message) {
 			Ok(_) => (),
-			Err(_) => println!("Failed sending message to server")
+			Err(_) => output("Failed sending message to host")
 		}
 	}
 }

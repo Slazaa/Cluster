@@ -73,7 +73,7 @@ pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&s
 
 			output("Joining Cluster");
 
-			*network_state.lock().unwrap() = NetworkState::Client(match Client::connect(args[0]) {
+			let client = NetworkState::Client(match Client::connect(args[0]) {
 				Ok(x) => x,
 				Err(e) => {
 					output(&e);
@@ -81,9 +81,16 @@ pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&s
 				}
 			});
 
+			*network_state.lock().unwrap() = client;
+
 			output("Cluster joined");
 		}
 		"leave" => {
+			match &*network_state.lock().unwrap() {
+				NetworkState::Server(server) => server.close(),
+				_ => ()
+			}
+
 			match *network_state.lock().unwrap() {
 				NetworkState::None => output("You are not in a Cluster"),
 				_ => output("Cluster left")

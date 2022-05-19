@@ -40,14 +40,22 @@ fn main() {
 		let network_state = network_state_clone;
 
 		loop {
+			let mut leave = false;
+
 			match &mut *network_state.lock().unwrap() {
 				NetworkState::Server(server) => {
 					server.handle();
 				}
 				NetworkState::Client(client) => {
-					client.handle();
+					if !client.handle() {
+						leave = true;
+					}
 				}
 				_ => ()
+			}
+
+			if leave {
+				*network_state.lock().unwrap() = NetworkState::None;
 			}
 		}
 	});

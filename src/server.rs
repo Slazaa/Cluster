@@ -1,36 +1,55 @@
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream, SocketAddr};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::output::*;
 
 pub struct Server {
-	listener: TcpListener
+	listener: TcpListener,
+	clients: Vec<Arc<Mutex<(TcpStream, SocketAddr)>>>,
+	closed: Arc<Mutex<bool>>,
 }
 
 impl Server {
 	pub fn open(port: u16) -> Result<Self, String> {
-		let mut address = "localhost:".to_owned();
+		let mut address = "0.0.0.0:".to_owned();
 		address.push_str(&port.to_string());
 
-		let listener = TcpListener::bind(address).expect("Failed creating a listener");
-		listener.set_nonblocking(true).expect("Failed setting non blocking");
+		let listener = match TcpListener::bind(address) {
+			Ok(x) => x,
+			Err(_) => return Err("Failed creating a listener".to_owned())
+		};
+
+		match listener.set_nonblocking(true) {
+			Ok(x) => x,
+			Err(_) => return Err("Failed setting non blocking".to_owned())
+		}
 
 		Ok(Self {
-			listener
+			listener,
+			clients: Vec::new(),
+			closed: Arc::new(Mutex::new(false)),
 		})
 	}
 
-	fn handle_client(mut stream: TcpStream, address: SocketAddr) {
+	pub fn close(&self) {
+		*self.closed.lock().unwrap() = true;
+	}
+
+	fn handle_client(client: Arc<Mutex<(TcpStream, SocketAddr)>>, closed: Arc<Mutex<bool>>) {
+		const BUFFER_SIZE: usize = 256;
+
 		let mut msg: Vec<u8> = Vec::new();
 
-		loop {
-			let mut buffer = [0; 10];
+		while !closed.lock().unwrap().clone() {
+			let mut buffer = [0; BUFFER_SIZE];
+			let result = client.lock().unwrap().0.read(&mut buffer);
 
-			match stream.read(&mut buffer) {
+			match result {
 				Ok(received) => {
 					if received < 1 {
-						output(&format!("Client disconnected from: '{}'", address));
+						output(&format!("Client disconnected from: '{}'", client.lock().unwrap().1));
 						return;
 					}
 
@@ -40,7 +59,7 @@ impl Server {
 						}
 
 						if *c == '\n' as u8 {
-							output(&format!("<{}> {}", address, String::from_utf8(msg).unwrap()));
+							output(&format!("<{}> {}", client.lock().unwrap().1, String::from_utf8(msg).unwrap()));
 							msg = Vec::new();
 							continue;
 						}
@@ -50,7 +69,7 @@ impl Server {
 				}
 				Err(e) => {
 					if e.kind() != io::ErrorKind::WouldBlock {
-						output(&format!("Client disconnected from: '{}'", address));
+						output(&format!("Client disconnected from: '{}'", client.lock().unwrap().1));
 						return;
 					}
 				}
@@ -60,11 +79,16 @@ impl Server {
 
 	pub fn handle(&mut self) {
 		match self.listener.accept() {
-			Ok((stream, address)) => {
-				output(&format!("Client connected from: '{}'", address));
+			Ok(client) => {
+				self.clients.push(Arc::new(Mutex::new(client)));
+			
+				output(&format!("Client connected from: '{}'", self.clients.last().unwrap().lock().unwrap().1));
+
+				let client = Arc::clone(&self.clients.last().unwrap());
+				let closed = Arc::clone(&self.closed);
 
 				thread::spawn(move || {
-					Server::handle_client(stream, address);
+					Server::handle_client(client, closed);
 				});
 			}
 			Err(_) => ()
@@ -72,6 +96,11 @@ impl Server {
 	}
 
 	pub fn send(&mut self, message: &str) {
-
+		for mut client in self.clients.iter().map(|x| x.lock().unwrap()) {
+			match write!(client.0, "{}\n", message) {
+				Ok(_) => (),
+				Err(_) => output("Failed sending message to host")
+			}
+		}
 	}
 }
