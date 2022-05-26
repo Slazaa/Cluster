@@ -1,15 +1,25 @@
 use std::io::{self, Write, Read};
 use std::net::TcpStream;
 
+use crate::constants::{DEFAULT_PORT, MAX_BUFFER_SIZE};
 use crate::output::*;
 
 pub struct Client {
-	stream: TcpStream
+	stream: TcpStream,
+	username: String,
+	server_username: String
 }
 
 impl Client {
-	pub fn connect(address: &str) -> Result<Self, String> {
-		let stream = match TcpStream::connect(address) {
+	pub fn connect(address: &str, password: &str, username: &str) -> Result<Self, String> {
+		let mut addr = address.to_owned();
+
+		if !address.contains(':') {
+			addr.push_str(":");
+			addr.push_str(&DEFAULT_PORT.to_string());
+		}
+
+		let stream = match TcpStream::connect(addr) {
 			Ok(x) => x,
 			Err(_) => return Err("Invalid address".to_owned())
 		};
@@ -19,43 +29,105 @@ impl Client {
 			Err(_) => return Err("Failed setting non blocking".to_owned())
 		}
 
-		Ok(Self {
-			stream
-		})
+		let mut client = Self {
+			stream,
+			username: username.to_owned(),
+			server_username: "Server".to_owned()
+		};
+
+		client.send(&format!(r#"{{"password":"{}","username":"{}"}}"#, password, client.username));
+
+		loop {
+			match client.receive() {
+				Ok(content) => {
+					match content {
+						Some(content) => {
+							let value: serde_json::Value = match serde_json::from_str(&content) {
+								Ok(x) => x,
+								Err(_) => {
+									output("Server sent invalid message");
+									continue;
+								}
+							};
+	
+							if let Some(content) = value.get("valid") {
+								if content.as_bool().unwrap() {
+									return Ok(client);
+								} else {
+									return Err("Invalid password".to_owned());
+								}
+							}
+						}
+						None => ()
+					}
+				}
+				Err(_) => ()
+			}
+		}
 	}
 
-	pub fn handle(&mut self) -> bool {
-		const BUFFER_SIZE: usize = 256;
+	fn receive(&mut self) -> Result<Option<String>, String> {
+		let mut message: Vec<u8> = Vec::new();
 
-		let mut msg: Vec<u8> = Vec::new();
-		let mut buffer = [0; BUFFER_SIZE];
+		loop {
+			let mut buffer = [0; MAX_BUFFER_SIZE];
+			let result = self.stream.read(&mut buffer);
 
-		match self.stream.read(&mut buffer) {
-			Ok(received) => {
-				if received < 1 {
-					output("Connection with host lost");
-					return false;
-				}
-
-				for (i, c) in buffer.iter().enumerate() {
-					if i >= received {
+			match result {
+				Ok(received) => {
+					if received < 1 {
 						break;
 					}
 
-					if *c == '\n' as u8 {
-						output(&format!("<Server> {}", String::from_utf8(msg).unwrap()));
-						msg = Vec::new();
-						continue;
+					for (i, c) in buffer.iter().enumerate() {
+						if i >= received {
+							continue;
+						}
+
+						if *c == '\n' as u8 {
+							return Ok(Some(String::from_utf8(message.clone()).unwrap()));
+						}
+
+						message.push(*c);
+					}
+				}
+				Err(e) => {
+					if e.kind() != io::ErrorKind::WouldBlock {
+						break;
 					}
 
-					msg.push(*c);
+					return Ok(None);
+				}
+			}
+		}
+
+		return Err("Connection with host lost".to_string());
+	}
+
+	pub fn handle(&mut self) -> bool {
+		match self.receive() {
+			Ok(content) => {
+				match content {
+					Some(content) => {
+						let value: serde_json::Value = match serde_json::from_str(&content) {
+							Ok(x) => x,
+							Err(_) => {
+								output("Server sent invalid message");
+								return true;
+							}
+						};
+
+						if let Some(content) = value.get("message") {
+							let message = content.as_str().unwrap();
+							output(&format!("<{}> {}", self.server_username, message));
+						}
+					}
+					None => ()
 				}
 			}
 			Err(e) => {
-				if e.kind() != io::ErrorKind::WouldBlock {
-					output("Connection with host lost");
-					return false;
-				}
+				output(&e);
+				return false;
 			}
 		}
 

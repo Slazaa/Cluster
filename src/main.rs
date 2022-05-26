@@ -1,5 +1,6 @@
 mod client;
 mod command;
+mod constants;
 mod network;
 mod output;
 mod server;
@@ -14,7 +15,12 @@ use terminal::utils::Position;
 
 use network::NetworkState;
 
+use crate::constants::MAX_MESSAGE_SIZE;
+
 fn main() {
+	println!("Welcome to Cluster!");
+	println!("Type '/help' to view a list of the available commands.");
+
 	let network_state = Arc::new(Mutex::new(NetworkState::None));
 	let args: Vec<String> = env::args().collect();
 
@@ -89,10 +95,16 @@ fn main() {
 			if input.is_empty() {
 				cursor::set_pos(Position::new(0, cursor::get_pos().y - 1));
 			} else {
-				match &mut *network_state.lock().unwrap() {
-					NetworkState::Server(server) => server.send(&input),
-					NetworkState::Client(client) => client.send(&input),
-					_ => ()
+				if input.len() < MAX_MESSAGE_SIZE {
+					let message = format!(r#"{{"message":"{}"}}"#, input);
+
+					match &mut *network_state.lock().unwrap() {
+						NetworkState::Server(server) => server.send_all(&message),
+						NetworkState::Client(client) => client.send(&message),
+						_ => ()
+					}
+				} else {
+					println!("Message too long");
 				}
 			}
 
