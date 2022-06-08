@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 terminal = { git = "https://github.com/Slazaa/Rust-Terminal" }
 serde_json = "1.0.81"
+getch = "0.3.1"

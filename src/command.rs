@@ -9,6 +9,11 @@ use crate::output::*;
 pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&str>) {
 	match name {
 		"help" => {
+			if !args.is_empty() {
+				output("Too many arguments were given");
+				return;
+			}
+
 			let command_names = ["help", "host", "join", "leave", "quit"];
 			let command_descriptions = ["\
 - Shows the available commands
@@ -33,19 +38,13 @@ pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&s
 - Leave the current server
 ",
 "\
-- Quit the software
+- Quit the application
 			"];
 
-			if args.is_empty() {
-				for (i, name) in command_names.iter().enumerate() {
-					output(name);
-					output(command_descriptions[i]);
-				}
-
-				return;
+			for (i, name) in command_names.iter().enumerate() {
+				output(name);
+				output(command_descriptions[i]);
 			}
-
-			// TODO: Individual commands
 		}
 		"host" => {
 			let mut leave = false;
@@ -68,7 +67,7 @@ pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&s
 
 			while let Some(arg) = args_iter.next() {
 				if *arg == "-p" {
-					match args_iter.nth(0) {
+					match args_iter.next() {
 						Some(arg) => port = match arg.parse::<u16>() {
 							Ok(x) => x,
 							Err(_) => {
@@ -82,7 +81,7 @@ pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&s
 						}
 					}
 				} else if *arg == "-pw" {
-					match args_iter.nth(0) {
+					match args_iter.next() {
 						Some(arg) => password = (*arg).to_owned(),
 						None => {
 							output("Expected argument");
@@ -90,7 +89,7 @@ pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&s
 						}
 					}
 				} else if *arg == "-u" {
-					match args_iter.nth(0) {
+					match args_iter.next() {
 						Some(arg) => username = (*arg).to_owned(),
 						None => {
 							output("Expected argument");
@@ -105,7 +104,7 @@ pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&s
 				}
 			}
 
-			output("Opening Cluster");
+			output("Opening server");
 
 			*network_state.lock().unwrap() = NetworkState::Server(match Server::open(port, &password, &username, logger) {
 				Ok(x) => x,
@@ -115,10 +114,10 @@ pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&s
 				}
 			});
 
-			output("Cluster open");
+			output("Server open");
 		}
 		"join" => {
-			if args.len() < 1 {
+			if args.is_empty() {
 				output("Not enough arguments");
 				return;
 			}
@@ -141,7 +140,7 @@ pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&s
 
 			while let Some(arg) = it.next() {
 				if *arg == "-pw" {
-					match it.nth(0) {
+					match it.next() {
 						Some(arg) => password = (*arg).to_owned(),
 						None => {
 							output("Expected argument");
@@ -149,7 +148,7 @@ pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&s
 						}
 					}
 				} else if *arg == "-u" {
-					match it.nth(0) {
+					match it.next() {
 						Some(arg) => username = (*arg).to_owned(),
 						None => {
 							output("Expected argument");
@@ -162,7 +161,7 @@ pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&s
 				}
 			}
 
-			output("Joining Cluster");
+			output("Joining server");
 
 			let client = NetworkState::Client(match Client::connect(args[0], &password, &username) {
 				Ok(x) => x,
@@ -174,22 +173,28 @@ pub fn execute(network_state: Arc<Mutex<NetworkState>>, name: &str, args: Vec<&s
 
 			*network_state.lock().unwrap() = client;
 
-			output("Cluster joined");
+			output("Server joined");
 		}
 		"leave" => {
-			match &*network_state.lock().unwrap() {
-				NetworkState::Server(server) => server.close(),
-				_ => ()
+			if let NetworkState::Server(server) = &*network_state.lock().unwrap() {
+				server.close();
 			}
 
 			match *network_state.lock().unwrap() {
-				NetworkState::None => output("You are not in a Cluster"),
-				_ => output("Cluster left")
+				NetworkState::None => output("You are not in a server"),
+				_ => output("Server left")
 			}
 
 			*network_state.lock().unwrap() = NetworkState::None;
 		}
-		"quit" => std::process::exit(0),
+		"quit" => {
+			if !args.is_empty() {
+				output("Too many arguments were given");
+				return;
+			}
+
+			std::process::exit(0);
+		}
 		_ => output(&format!("Unknown command '{}'", name))
 	}
 }

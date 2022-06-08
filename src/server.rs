@@ -16,13 +16,13 @@ pub struct Server {
 	listener: TcpListener,
 	password: String,
 	username: String,
-	logger: bool,
+	//logger: bool,
 	clients: Vec<Arc<Mutex<ClientInfos>>>,
 	closed: Arc<Mutex<bool>>,
 }
 
 impl Server {
-	pub fn open(port: u16, password: &str, username: &str, logger: bool) -> Result<Self, String> {
+	pub fn open(port: u16, password: &str, username: &str, _logger: bool) -> Result<Self, String> {
 		let mut address = "0.0.0.0:".to_owned();
 		address.push_str(&port.to_string());
 
@@ -40,7 +40,7 @@ impl Server {
 			listener,
 			password: password.to_owned(),
 			username: username.to_owned(),
-			logger,
+			//logger,
 			clients: Vec::new(),
 			closed: Arc::new(Mutex::new(false)),
 		})
@@ -68,7 +68,7 @@ impl Server {
 							continue;
 						}
 
-						if *c == '\n' as u8 {
+						if *c == b'\n' {
 							return Ok(Some(String::from_utf8(message).unwrap()));
 						}
 
@@ -85,41 +85,68 @@ impl Server {
 			}
 		}
 
-		return Err(format!("Client disconnected from: '{}'", client.lock().unwrap().address));
+		return Err(format!("{} left", client.lock().unwrap().username));
 	}
 
-	fn handle_client(client: Arc<Mutex<ClientInfos>>, closed: Arc<Mutex<bool>>, password: &str) {
-		while !closed.lock().unwrap().clone() {
+	pub fn send(stream: &mut TcpStream, message: &str) {
+		if writeln!(stream, "{}", message).is_err() {
+			output("Failed sending message to client");
+		}
+	}
+
+	pub fn send_all(&mut self, message: &str) {
+		for mut client in self.clients.iter().map(|x| x.lock().unwrap()) {
+			Server::send(&mut client.stream, message);
+		}
+	}
+
+	fn handle_client(client: Arc<Mutex<ClientInfos>>, closed: Arc<Mutex<bool>>, password: &str, username: &str) {
+		match Server::receive(&client) {
+			Ok(content) => {
+				if let Some(content) = content {
+					let value: serde_json::Value = match serde_json::from_str(&content) {
+						Ok(x) => x,
+						Err(_) => {
+							output("Client sent invalid message");
+							return;
+						}
+					};
+
+					if let Some(content) = value.get("password") {
+						if content.as_str().unwrap() == password {
+							Server::send(&mut client.lock().unwrap().stream, &format!(r#"{{"username":"{}","valid":true}}"#, username));
+						} else {
+							Server::send(&mut client.lock().unwrap().stream, r#"{"valid":false}"#);
+							return;
+						}
+					}
+
+					if let Some(content) = value.get("username") {
+						client.lock().unwrap().username = content.as_str().unwrap().to_owned();
+					}
+				}
+			}
+			Err(_) => return
+		}
+
+		output(&format!("{} joined", client.lock().unwrap().username));
+
+		while !*closed.lock().unwrap() {
 			match Server::receive(&client) {
 				Ok(content) => {
-					match content {
-						Some(content) => {
-							let value: serde_json::Value = match serde_json::from_str(&content) {
-								Ok(x) => x,
-								Err(_) => {
-									output("Client sent invalid message");
-									continue;
-								}
-							};
+					if let Some(content) = content {
+						let value: serde_json::Value = match serde_json::from_str(&content) {
+							Ok(x) => x,
+							Err(_) => {
+								output("Client sent invalid message");
+								continue;
+							}
+						};
 
-							if let Some(content) = value.get("password") {
-								if content.as_str().unwrap() != password {
-									return;
-								}
-							}
-
-							if let Some(content) = value.get("username") {
-								if !content.as_str().unwrap().is_empty() {
-									client.lock().unwrap().username = content.as_str().unwrap().to_owned();
-								}
-							}
-							
-							if let Some(content) = value.get("message") {
-								let message = content.as_str().unwrap();
-								output(&format!("<{}> {}", client.lock().unwrap().username, message));
-							}
+						if let Some(content) = value.get("message") {
+							let message = content.as_str().unwrap();
+							output(&format!("<{}> {}", client.lock().unwrap().username, message));
 						}
-						None => ()
 					}
 				}
 				Err(e) => {
@@ -134,45 +161,25 @@ impl Server {
 		let remove_client = Arc::new(Mutex::new(None));
 		let remove_client_clone = Arc::clone(&remove_client);
 
-		match self.listener.accept() {
-			Ok((stream, address)) => {
-				self.clients.push(Arc::new(Mutex::new(ClientInfos { stream, address, username: "unknown".to_owned() })));
+		if let Ok((stream, address)) = self.listener.accept() {
+			self.clients.push(Arc::new(Mutex::new(ClientInfos { stream, address, username: "unknown".to_owned() })));
+			let index = self.clients.len();
 
-				let client = self.clients.last().unwrap();
-				let index = self.clients.len();
+			let client_clone = Arc::clone(self.clients.last().unwrap());
+			let closed = Arc::clone(&self.closed);
+			let password = self.password.clone();
+			let username = self.username.clone();
 
-				output(&format!("Client connected from: '{}'", client.lock().unwrap().address));
-
-				let client = Arc::clone(&client);
-				let closed = Arc::clone(&self.closed);
-
-				let password = self.password.clone();
-
-				thread::spawn(move || {
-					Server::handle_client(client, closed, &password);
-					*remove_client_clone.lock().unwrap() = Some(index);
-				});
-			}
-			Err(_) => ()
+			thread::spawn(move || {
+				Server::handle_client(client_clone, closed, &password, &username);
+				*remove_client_clone.lock().unwrap() = Some(index);
+			});
 		}
 
 		let remove_client = *remove_client.lock().unwrap();
 
 		if let Some(index) = remove_client {
 			self.clients.remove(index);
-		}
-	}
-
-	pub fn send(stream: &mut TcpStream, message: &str) {
-		match write!(stream, "{}\n", message) {
-			Ok(_) => (),
-			Err(_) => output("Failed sending message to host")
-		}
-	}
-
-	pub fn send_all(&mut self, message: &str) {
-		for mut client in self.clients.iter().map(|x| x.lock().unwrap()) {
-			Server::send(&mut client.stream, message);
 		}
 	}
 }

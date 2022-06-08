@@ -87,32 +87,32 @@ fn main() {
 
 			let command_args: Vec<&str> = command.iter()
 				.skip(1)
-				.map(|&x| x)
+				.copied()
 				.collect();
 
 			command::execute(Arc::clone(&network_state), &command_name, command_args);
-		} else {
-			if input.is_empty() {
-				cursor::set_pos(Position::new(0, cursor::get_pos().y - 1));
-			} else {
-				if input.len() < MAX_MESSAGE_SIZE {
-					let message = format!(r#"{{"message":"{}"}}"#, input);
+            
+            continue;
+        }
 
-					match &mut *network_state.lock().unwrap() {
-						NetworkState::Server(server) => server.send_all(&message),
-						NetworkState::Client(client) => client.send(&message),
-						_ => ()
-					}
-				} else {
-					println!("Message too long");
-				}
-			}
+        if input.is_empty() {
+            cursor::set_pos(Position::new(0, cursor::get_pos().y - 1));
+        } else if input.len() < MAX_MESSAGE_SIZE {
+            let message = format!(r#"{{"message":"{}"}}"#, input);
 
-			print!(" > ");
+            match &mut *network_state.lock().unwrap() {
+                NetworkState::Server(server) => server.send_all(&message),
+                NetworkState::Client(client) => client.send(&message),
+                _ => ()
+            }
+        } else {
+            println!("Message too long");
+        }
 
-			io::stdout()
-				.flush()
-				.unwrap();
-		}
+        print!(" > ");
+
+        io::stdout()
+            .flush()
+            .unwrap();
 	}
 }
