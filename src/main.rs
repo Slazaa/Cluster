@@ -24,20 +24,18 @@ fn main() {
 	let network_state = Arc::new(Mutex::new(NetworkState::None));
 	let args: Vec<String> = env::args().collect();
 
-	print!(" > ");
+	println!();
 
-	io::stdout()
-		.flush()
-		.unwrap();
+	let mut input = String::new();
 
 	if args.len() > 1 {
-		let command_name = args[1].as_str();
-		let command_args: Vec<&str> = args.iter()
-			.skip(2)
+		let command: Vec<&str> = args.iter()
+			.skip(1)
 			.map(|x| x.as_str())
 			.collect();
 
-		command::execute(Arc::clone(&network_state), command_name, command_args);
+		input.push('/');
+		input.push_str(command.join(" ").as_str());
 	}
 
 	let network_state_clone = Arc::clone(&network_state);
@@ -67,14 +65,6 @@ fn main() {
 	});
 
 	loop {
-		let mut input = String::new();
-
-		io::stdin()
-			.read_line(&mut input)
-			.unwrap();
-
-		input = input.trim().to_owned();
-
 		if input.starts_with('/') {
 			let command: Vec<&str> = input.split(' ')
 				.collect();
@@ -91,28 +81,32 @@ fn main() {
 				.collect();
 
 			command::execute(Arc::clone(&network_state), &command_name, command_args);
-            
-            continue;
-        }
+		} else if input.is_empty() {
+			cursor::set_pos(Position::new(0, cursor::get_pos().y - 1));
+		} else if input.len() < MAX_MESSAGE_SIZE {
+			let message = format!(r#"{{"message":"{}"}}"#, input);
 
-        if input.is_empty() {
-            cursor::set_pos(Position::new(0, cursor::get_pos().y - 1));
-        } else if input.len() < MAX_MESSAGE_SIZE {
-            let message = format!(r#"{{"message":"{}"}}"#, input);
+			match &mut *network_state.lock().unwrap() {
+				NetworkState::Server(server) => server.send_all(&message),
+				NetworkState::Client(client) => client.send(&message),
+				_ => ()
+			}
+		} else {
+			println!("Message too long");
+		}
 
-            match &mut *network_state.lock().unwrap() {
-                NetworkState::Server(server) => server.send_all(&message),
-                NetworkState::Client(client) => client.send(&message),
-                _ => ()
-            }
-        } else {
-            println!("Message too long");
-        }
+		print!(" > ");
 
-        print!(" > ");
+		io::stdout()
+			.flush()
+			.unwrap();
 
-        io::stdout()
-            .flush()
-            .unwrap();
+		input.clear();
+
+		io::stdin()
+			.read_line(&mut input)
+			.unwrap();
+
+		input = input.trim().to_owned();
 	}
 }
