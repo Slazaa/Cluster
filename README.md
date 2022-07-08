@@ -27,7 +27,7 @@ join
 leave
 - Leave the current server
 
-qui
+quit
 - Quit the application
 ```
 
